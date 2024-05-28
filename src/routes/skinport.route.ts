@@ -92,21 +92,27 @@ export async function skinportRoutes(server: FastifyInstance) {
     const amountToDeduct = 100;
 
     try {
-      const userQuery = await client.query('SELECT balance FROM users WHERE id = $1', [userId]);
+      await client.query('BEGIN');
+      const userQuery = await client.query('SELECT balance FROM users WHERE id = $1 FOR UPDATE', [userId]);
       const user = userQuery.rows[0];
 
       if (!user) {
+        await client.query('ROLLBACK');
         return reply.status(404).send({ error: 'User not found' });
       }
 
       if (user.balance < amountToDeduct) {
-        return reply.status(400).send({ error: 'Not enough balance' });
+        await client.query('ROLLBACK');
+        return reply.status(400).send({ error: 'Insufficient balance' });
       }
 
-      await client.query('UPDATE users SET balance = balance - $1 WHERE id = $2', [amountToDeduct, userId]);
+      const newBalance = user.balance - amountToDeduct;
+      await client.query('UPDATE users SET balance = $1 WHERE id = $2', [newBalance, userId]);
+      await client.query('COMMIT');
 
-      reply.send({ success: true, newBalance: user.balance - amountToDeduct });
+      reply.send({ success: true, newBalance });
     } catch (error) {
+      await client.query('ROLLBACK');
       reply.status(500).send({ error: 'Database error' });
     }
   });
